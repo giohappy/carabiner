@@ -300,8 +300,8 @@ static void processMessage(std::string msg, struct mg_connection *nc) {
   }
 }
 
-static void eventHandler(struct mg_connection *nc, int ev, void *p) {
-  struct mbuf *io = &nc->recv_mbuf;
+static void eventHandler(struct mg_connection *nc, int ev, void *p, void *data) {
+  struct mg_iobuf *io = &nc->recv;
   (void) p;
   bool needsUpdate;
 
@@ -325,9 +325,9 @@ static void eventHandler(struct mg_connection *nc, int ev, void *p) {
     }
     break;
 
-  case MG_EV_RECV:
-    processMessage(std::string(io->buf, io->len), nc);
-    mbuf_remove(io, io->len);       // Discard message from recv buffer
+  case MG_EV_READ:
+    processMessage(std::string(reinterpret_cast<const char*>(io->buf), io->len), nc);
+    mg_iobuf_del(io, 0, io->len);       // Discard message from recv buffer
     break;
   default:
     break;
@@ -369,6 +369,8 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
+  syncStartStop = true;
+
   linkInstance.setTempoCallback(tempoCallback);
   linkInstance.setNumPeersCallback(peersCallback);
   linkInstance.setStartStopCallback(startStopCallback);
@@ -378,14 +380,17 @@ int main(int argc, char* argv[]) {
   struct mg_mgr mgr;
   std::string port = "tcp://127.0.0.1:" + std::to_string(FLAGS_port);
 
-  mg_mgr_init(&mgr, NULL);
-  mg_bind(&mgr, port.c_str(), eventHandler);
+  mg_mgr_init(&mgr);
+  mg_listen(&mgr, port.c_str(), eventHandler, NULL);
 
   std::cout << "Starting Carabiner " << version << " on port " << port << std::endl;
 
   for (;;) {
     if (!FLAGS_daemon) {
-      std::cout << "Link bpm: " << linkInstance.captureAppSessionState().tempo() <<
+        const ableton::Link::SessionState sessionState = linkInstance.captureAppSessionState();
+      std::cout << "Link bpm: " << sessionState.tempo() <<
+    " IsPlaying: " << sessionState.isPlaying() <<
+    " Beat: " << std::to_string(sessionState.beatAtTime(linkInstance.clock().micros(), 4.0)) <<
 	" Peers: " << linkInstance.numPeers() <<
 	" Connections: " << activeConnections.size() << "     \r" << std::flush;
     }
